@@ -19,7 +19,7 @@ fight_began_string = 'A melee breaks out between the crews!'
 
 pirate_stats_table_headers = [["Pirate", "LL Total", "LL Avg", "TLB", "TTB"]]
 battle_stats_table_headers = [["Battle #", "Ship Name", "Total Greedies"]]
-version = '2.1'
+version = '2.2'
 
 
 class GreedyBashCounter(object):

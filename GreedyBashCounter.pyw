@@ -17,8 +17,8 @@ battle_ended_string = 'as your initial cut of the booty!'
 battle_began_string = 'intercepted'
 fight_began_string = 'A melee breaks out between the crews!'
 
-table_headers = [["Pirate", "LL Total", "LL Avg", "TLB", "TTB"]]
-
+pirate_stats_table_headers = [["Pirate", "LL Total", "LL Avg", "TLB", "TTB"]]
+battle_stats_table_headers = [["Battle #", "Ship Name", "Total Greedies"]]
 version = '2.1'
 
 
@@ -26,9 +26,8 @@ class GreedyBashCounter(object):
     active = False
     total_lls, average_lls, last_battle_lls, this_battle_lls, battle_count = 0, 0, 0, 0, 0
     battle_started, battle_ended, fight_started = False, False, False
-    pirates = {
-        'row_ids': [-1]
-    }
+    current_battle_ship_name, last_battle_ship_name = "None", "None"
+    pirates = { 'row_ids': [-1] }
 
     def __init__(self):
         self.app = gui(useSettings=True, showIcon=False)
@@ -80,23 +79,38 @@ class GreedyBashCounter(object):
         self.app.addLabel("LLLastBattle", '0', 1, 1)
         self.app.addLabel("LLThisBattleTitle", 'This Battle:', 1, 2)
         self.app.addLabel("LLThisBattle", '0', 1, 3)
-        self.app.addLabel("BattleCountTitle", 'Battles:', 2, 0)
-        self.app.addLabel("BattleCount", '0', 2, 1)
         self.app.stopLabelFrame()
 
-        self.app.startLabelFrame('Buttons', hideTitle=True, colspan=2)
+        self.app.startLabelFrame("Battle Stats", colspan=2)
         self.app.setSticky('ew')
-        self.app.addButton('Send Totals', self.send_totals, 0, 0)
-        self.app.addButton('Per Pirate Stats', self.pirate_stat_window, 0, 1)
+        self.app.addLabel("BattleCountTitle", 'Battles:', 0, 0)
+        self.app.addLabel("BattleCount", '0', 0, 1)
+        self.app.addLabel("LBShipNameTitle", 'Last Battle:', 1, 0)
+        self.app.addLabel("LBShipName", '', 1, 1)
+        self.app.addLabel("CBShipNameTitle", 'Current Battle:', 2, 0)
+        self.app.addLabel("CBShipName", '', 2, 1)
+        self.app.stopLabelFrame()
+
+        self.app.startLabelFrame('Stats', colspan=2)
+        self.app.setSticky('ew')
+        self.app.addButton('Per Battle', self.battle_stat_window, 0, 0)
+        self.app.addButton('Per Pirate', self.pirate_stat_window, 0, 1)
+        self.app.addButton('Send Totals', self.send_totals, colspan=2)
         self.app.stopLabelFrame()
 
         self.app.startSubWindow("Per Pirate Statistics", transient=True)
         self.app.setResizable(canResize=True)
         self.app.hideTitleBar()
         self.app.addGrip()
-        self.app.addTable('PirateStats', table_headers, action=self.send_pirate_stats, actionHeading='PP',
+        self.app.addTable('PirateStats', pirate_stats_table_headers, action=self.send_pirate_stats, actionHeading='PP',
                           actionButton='Send')
+        self.app.stopSubWindow()
 
+        self.app.startSubWindow("Per Battle Statistics", transient=True)
+        self.app.setResizable(canResize=True)
+        self.app.hideTitleBar()
+        self.app.addGrip()
+        self.app.addTable('BattleStats', battle_stats_table_headers)
         self.app.stopSubWindow()
 
         self.app.startSubWindow("Log Folder", modal=True)
@@ -133,19 +147,10 @@ class GreedyBashCounter(object):
         self.app.go()
 
     # Menus
-    def menu(self):
-        self.app.showSubWindow('About GBC')
-
-    def log_folder(self):
-        self.app.showSubWindow('Log Folder')
-
     def save_log_folder(self):
         log_folder = os.path.dirname(self.app.getEntry('log_folder_entry'))
         self.app.setSetting('log_folder', log_folder)
         self.app.saveSettings()
-
-    def close_log_window(self):
-        self.app.hideSubWindow('Log Folder')
 
     # Core Functions
     def get_log_list(self):
@@ -195,18 +200,24 @@ class GreedyBashCounter(object):
             except ValueError:
                 pass
             sanitized_lines = [sub('^\[..:..:..\] ', '', line) for line in line_list]
-            print(sanitized_lines)
-            if [line for line in sanitized_lines if battle_ended_string in line]:
-                self.battle_ended = True
-                self.battle_started = False
-                self.fight_started = False
-                print('battle ended')
-            elif [line for line in sanitized_lines if battle_began_string in line]:
-                self.battle_started = True
-                self.battle_ended = False
-                print('battle began')
-            elif [line for line in sanitized_lines if battle_began_string in line]:
-                self.fight_started = True
+
+            for line in sanitized_lines:
+                if battle_began_string in line:
+                    self.battle_started = True
+                    self.battle_ended = False
+                    self.current_battle_ship_name = ' '.join(line.split(' ')[-2:]).replace('!', '')
+                    self.app.queueFunction(self.app.setLabel, "CBShipName", self.current_battle_ship_name)
+                    print('Battle Started')
+                elif fight_began_string in line:
+                    self.fight_started = True
+                    print('Fight Started')
+                elif battle_ended_string in line:
+                    self.battle_ended = True
+                    self.battle_started = False
+                    self.fight_started = False
+                    print('Battle Ended')
+
+
             greedy_sanitized_lines = [line for line in sanitized_lines if any(s for s in greedy_strings if s in line)]
             return greedy_sanitized_lines
 
@@ -237,12 +248,17 @@ class GreedyBashCounter(object):
         self.last_battle_lls = 0
         self.this_battle_lls = 0
         self.battle_count = 0
+        self.current_battle_ship_name = "None"
+        self.last_battle_ship_name = "None"
         self.app.setLabel('LLTotal', str(self.total_lls))
         self.app.setLabel('LLLastBattle', str(self.last_battle_lls))
         self.app.setLabel('LLAverage', str(self.average_lls))
         self.app.setLabel('BattleCount', str(self.battle_count))
         self.app.setLabel('LLThisBattle', str(self.this_battle_lls))
+        self.app.setLabel('LBShipName', str(self.last_battle_ship_name))
+        self.app.setLabel('CBShipName', str(self.current_battle_ship_name))
         self.app.deleteAllTableRows("PirateStats")
+        self.app.deleteAllTableRows("BattleStats")
         self.pirates = {
             'row_ids': [-1]
         }
@@ -265,11 +281,15 @@ class GreedyBashCounter(object):
         self.total_lls = self.total_lls + self.this_battle_lls
         self.average_lls = round(self.total_lls / self.battle_count, 1)
         self.this_battle_lls = 0
+        self.last_battle_ship_name = self.current_battle_ship_name
+        self.current_battle_ship_name = "None"
         self.app.setLabel('LLTotal', str(self.total_lls))
         self.app.setLabel('LLLastBattle', str(self.last_battle_lls))
         self.app.setLabel('LLAverage', str(self.average_lls))
         self.app.setLabel('BattleCount', str(self.battle_count))
         self.app.setLabel('LLThisBattle', str(self.this_battle_lls))
+        self.app.setLabel('LBShipName', str(self.last_battle_ship_name))
+        self.app.setLabel('CBShipName', str(self.current_battle_ship_name))
         self.battle_ended = False
 
         for pirate in self.pirates:
@@ -284,6 +304,9 @@ class GreedyBashCounter(object):
                             self.pirates[pirate]['ll_last_battle'], self.pirates[pirate]['ll_this_battle']]
                 self.app.queueFunction(self.app.replaceTableRow, 'PirateStats',
                                        self.pirates[pirate]['row_id'], row_data)
+
+        last_battle_row_data = [self.battle_count, self.last_battle_ship_name, self.last_battle_lls]
+        self.app.queueFunction(self.app.addTableRow, 'BattleStats', last_battle_row_data)
 
     # SubWindow Functions
     def clear_this_battle_lls(self):
@@ -303,17 +326,45 @@ class GreedyBashCounter(object):
     def show_override_window(self):
         self.app.showSubWindow('Override')
 
+    def menu(self):
+        self.app.showSubWindow('About GBC')
+
+    def log_folder(self):
+        self.app.showSubWindow('Log Folder')
+
+    def close_log_window(self):
+        self.app.hideSubWindow('Log Folder')
+
+    def battle_stat_window(self):
+        window = self.app.getSetting("PBSWindow")
+        if not window:
+            self.app.showSubWindow("Per Battle Statistics")
+            self.app.setSetting("PBSWindow", True)
+        else:
+            self.app.hideSubWindow("Per Battle Statistics")
+            self.app.setSetting("PBSWindow", False)
+
+        self.app.saveSettings()
+
     def pirate_stat_window(self):
         window = self.app.getSetting("PPSWindow")
         if not window:
             self.app.showSubWindow("Per Pirate Statistics")
             self.app.setSetting("PPSWindow", True)
-
         else:
             self.app.hideSubWindow("Per Pirate Statistics")
             self.app.setSetting("PPSWindow", False)
 
         self.app.saveSettings()
+
+    def get_table_data(self, table):
+        table_data = []
+        total_num_rows = self.app.getTableRowCount(table)
+        for row_num in range(total_num_rows):
+            table_data.append(self.app.getTableRow(table, row_num))
+
+        return table_data
+
 
     # Send To Puzzle Pirates Functions
     def send_pirate_stats(self, row_id):

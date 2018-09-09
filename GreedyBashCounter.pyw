@@ -27,7 +27,7 @@ class GreedyBashCounter(object):
     total_lls, average_lls, last_battle_lls, this_battle_lls, battle_count = 0, 0, 0, 0, 0
     battle_started, battle_ended, fight_started = False, False, False
     current_battle_ship_name, last_battle_ship_name = "None", "None"
-    pirates = { 'row_ids': [-1] }
+    pirates = {'row_ids': [-1]}
 
     def __init__(self):
         self.app = gui(useSettings=True, showIcon=False)
@@ -38,8 +38,6 @@ class GreedyBashCounter(object):
         self.app.setFont(size=10)
         self.app.setIcon('media\icon.gif')
 
-        self.app.addMenuList('Menu', ['Log Folder', 'About', 'Clear TB Counters'],
-                             [self.log_folder, self.menu, self.clear_this_battle_lls])
         self.app.createMenu('Pirates')
         self.log_folder = self.app.getSetting('log_folder')
         if self.log_folder:
@@ -55,18 +53,16 @@ class GreedyBashCounter(object):
         else:
             self.app.addMenuItem('Pirates', 'None')
             pnd = 'Pirate not set'
+        self.app.addMenuList('Logging', ['Start', 'Stop', 'Folder'],
+                             [self.start_stop, self.start_stop, self.log_folder_window])
+        self.app.addMenuList('Options', ['Override', 'Reset', 'Clear TB Counts'],
+                             [self.reset_stats, self.show_override_window, self.clear_this_battle_lls])
+        self.app.disableMenuItem("Logging", "Stop")
+        self.app.addMenu('About', self.about)
+
         self.app.startLabelFrame("PirateNameFrame", hideTitle=True, colspan=2)
         self.app.setSticky('ew')
         self.app.addLabel('PirateNameDisplay', pnd)
-        self.app.stopLabelFrame()
-
-        self.app.startLabelFrame("Log Monitoring", colspan=2)
-        self.app.setSticky('ew')
-        self.app.addButton("Start", self.start_stop, 0, 0)
-        self.app.addButton("Stop", self.start_stop, 0, 1)
-        self.app.addButton("Reset", self.reset_stats, 1, 0)
-        self.app.addButton('Override', self.show_override_window, 1, 1)
-        self.app.setButtonState("Stop", "disabled")
         self.app.stopLabelFrame()
 
         self.app.startLabelFrame("Lavish Lockers", colspan=2)
@@ -217,7 +213,6 @@ class GreedyBashCounter(object):
                     self.fight_started = False
                     print('Battle Ended')
 
-
             greedy_sanitized_lines = [line for line in sanitized_lines if any(s for s in greedy_strings if s in line)]
             return greedy_sanitized_lines
 
@@ -267,13 +262,13 @@ class GreedyBashCounter(object):
     def start_stop(self, btn):
         if btn == "Start" and not self.active:
             self.active = True
-            self.app.setButtonState("Start", "disabled")
-            self.app.setButtonState("Stop", "active")
+            self.app.disableMenuItem("Logging", "Start")
+            self.app.enableMenuItem("Logging", "Stop")
             self.app.thread(self.read_log)
         elif btn == "Stop" and self.active:
             self.active = False
-            self.app.setButtonState("Start", "active")
-            self.app.setButtonState("Stop", "disabled")
+            self.app.disableMenuItem("Logging", "Stop")
+            self.app.enableMenuItem("Logging", "Start")
 
     def update_major_stats(self):
         self.battle_count = self.battle_count + 1
@@ -326,10 +321,10 @@ class GreedyBashCounter(object):
     def show_override_window(self):
         self.app.showSubWindow('Override')
 
-    def menu(self):
+    def about(self):
         self.app.showSubWindow('About GBC')
 
-    def log_folder(self):
+    def log_folder_window(self):
         self.app.showSubWindow('Log Folder')
 
     def close_log_window(self):
@@ -364,7 +359,6 @@ class GreedyBashCounter(object):
             table_data.append(self.app.getTableRow(table, row_num))
 
         return table_data
-
 
     # Send To Puzzle Pirates Functions
     def send_pirate_stats(self, row_id):

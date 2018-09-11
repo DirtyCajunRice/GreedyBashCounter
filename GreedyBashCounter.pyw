@@ -82,9 +82,9 @@ class GreedyBashCounter(object):
         self.app.addLabel("BattleCountTitle", 'Battles:', 0, 0)
         self.app.addLabel("BattleCount", '0', 0, 1)
         self.app.addLabel("LBShipNameTitle", 'Last Battle:', 1, 0)
-        self.app.addLabel("LBShipName", '', 1, 1)
+        self.app.addLabel("LBShipName", 'None', 1, 1)
         self.app.addLabel("CBShipNameTitle", 'Current Battle:', 2, 0)
-        self.app.addLabel("CBShipName", '', 2, 1)
+        self.app.addLabel("CBShipName", 'None', 2, 1)
         self.app.stopLabelFrame()
 
         self.app.startLabelFrame('Stats', colspan=2)

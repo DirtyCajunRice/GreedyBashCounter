@@ -56,7 +56,7 @@ class GreedyBashCounter(object):
         self.app.addMenuList('Logging', ['Start', 'Stop', 'Folder'],
                              [self.start_stop, self.start_stop, self.log_folder_window])
         self.app.addMenuList('Options', ['Override', 'Reset', 'Clear TB Counts'],
-                             [self.reset_stats, self.show_override_window, self.clear_this_battle_lls])
+                             [self.show_override_window, self.reset_stats, self.clear_this_battle_lls])
         self.app.disableMenuItem("Logging", "Stop")
         self.app.addMenu('About', self.about)
 

@@ -1,11 +1,21 @@
 import os
+import sys
 from re import sub
-from time import sleep
-from appJar import gui
+import time
+from threading import Thread
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import *
 from pygtail import Pygtail
 from pywinauto import clipboard
 from pywinauto.keyboard import SendKeys
 from pywinauto.application import Application
+
+from UI.mainwindow import Ui_MainWindow as MainWindow
+from UI.piratestats import Ui_Form as PirateStatsWindow
+from UI.battlestats import Ui_Form as BattleStatsWindow
+from UI.overridecounts import Ui_Form as OverrideCountsWindow
+from UI.about import Ui_Form as AboutWindow
 
 greedy_strings = [
     'executes a masterful strike',
@@ -19,134 +29,160 @@ fight_began_string = 'A melee breaks out between the crews!'
 
 pirate_stats_table_headers = [["Pirate", "LL Total", "LL Avg", "TLB", "TTB"]]
 battle_stats_table_headers = [["Battle #", "Ship Name", "Total Greedies"]]
-version = '2.2'
+version = '3.0'
 
 
-class GreedyBashCounter(object):
+class GreedyBashCounter(QMainWindow, MainWindow):
     active = False
     total_lls, average_lls, last_battle_lls, this_battle_lls, battle_count = 0, 0, 0, 0, 0
     battle_started, battle_ended, fight_started = False, False, False
     current_battle_ship_name, last_battle_ship_name = "None", "None"
-    pirates = {'row_ids': [-1]}
+    pirates, battles = {}, {}
 
-    def __init__(self):
-        self.app = gui(useSettings=True, showIcon=False)
-        self.app.loadSettings()
-        self.app.setTitle('GBC')
-        self.app.setSize(205, 242)
-        self.app.setResizable(canResize=True)
-        self.app.setFont(size=10)
-        self.app.setIcon('media\icon.gif')
-
-        self.app.createMenu('Pirates')
-        self.log_folder = self.app.getSetting('log_folder')
+    def __init__(self, *args, **kwargs):
+        super(GreedyBashCounter, self).__init__(*args, **kwargs)
+        self.setupUi(self)
+        self.settings = QSettings('settings.ini', QSettings.IniFormat)
+        self.log_folder = self.settings.value('pp_log_folder')
         if self.log_folder:
-            log_list = self.get_log_list()
-            pirates = []
-            for log in log_list:
-                pirate_info = log.split('_')
-                pirates.append((pirate_info[0], pirate_info[1]))
-
-            for pirate, ocean in pirates:
-                self.app.addMenuItem('Pirates', '{} - {}'.format(pirate, ocean.capitalize()), self.set_pirate)
-            pnd = '{} - {}'.format(pirates[0][0], pirates[0][1].capitalize())
+            self.load_pirates_menu_thread()
         else:
-            self.app.addMenuItem('Pirates', 'None')
-            pnd = 'Pirate not set'
-        self.app.addMenuList('Logging', ['Start', 'Stop', 'Folder'],
-                             [self.start_stop, self.start_stop, self.log_folder_window])
-        self.app.addMenuList('Options', ['Override', 'Reset', 'Clear TB Counts'],
-                             [self.reset_stats, self.show_override_window, self.clear_this_battle_lls])
-        self.app.disableMenuItem("Logging", "Stop")
-        self.app.addMenu('About', self.about)
+            self.statusbar.showMessage('Log folder not set')
 
-        self.app.startLabelFrame("PirateNameFrame", hideTitle=True, colspan=2)
-        self.app.setSticky('ew')
-        self.app.addLabel('PirateNameDisplay', pnd)
-        self.app.stopLabelFrame()
+        if self.settings.value('last_pirate_action_used'):
+            last_pirate_used = self.settings.value('last_pirate_action_used')
+            self.set_pirate(last_pirate_used)
 
-        self.app.startLabelFrame("Lavish Lockers", colspan=2)
-        self.app.setSticky('ew')
-        self.app.addLabel("LLTotalTitle", 'Total:', 0, 0)
-        self.app.addLabel("LLTotal", '0', 0, 1)
-        self.app.addLabel("LLAverageTitle", 'Average:', 0, 2)
-        self.app.addLabel("LLAverage", '0', 0, 3)
-        self.app.addLabel("LLLastBattleTitle", 'Last Battle:', 1, 0)
-        self.app.addLabel("LLLastBattle", '0', 1, 1)
-        self.app.addLabel("LLThisBattleTitle", 'This Battle:', 1, 2)
-        self.app.addLabel("LLThisBattle", '0', 1, 3)
-        self.app.stopLabelFrame()
+        # Create sub windows
+        self.psw = PirateStats()
+        self.bsw = BattleStats()
+        self.aw = About()
+        self.ow = OverrideCounts()
 
-        self.app.startLabelFrame("Battle Stats", colspan=2)
-        self.app.setSticky('ew')
-        self.app.addLabel("BattleCountTitle", 'Battles:', 0, 0)
-        self.app.addLabel("BattleCount", '0', 0, 1)
-        self.app.addLabel("LBShipNameTitle", 'Last Battle:', 1, 0)
-        self.app.addLabel("LBShipName", '', 1, 1)
-        self.app.addLabel("CBShipNameTitle", 'Current Battle:', 2, 0)
-        self.app.addLabel("CBShipName", '', 2, 1)
-        self.app.stopLabelFrame()
+        # Menu Button Actions
+        self.menuOptions.triggered[QAction].connect(self.menu_button_action)
+        self.menuLogging.triggered[QAction].connect(self.menu_button_action)
+        self.actionLoad_Pirates.triggered.connect(self.load_pirates_menu_thread)
 
-        self.app.startLabelFrame('Stats', colspan=2)
-        self.app.setSticky('ew')
-        self.app.addButton('Per Battle', self.battle_stat_window, 0, 0)
-        self.app.addButton('Per Pirate', self.pirate_stat_window, 0, 1)
-        self.app.addButton('Send Totals', self.send_totals, colspan=2)
-        self.app.stopLabelFrame()
 
-        self.app.startSubWindow("Per Pirate Statistics", transient=True)
-        self.app.setResizable(canResize=True)
-        self.app.hideTitleBar()
-        self.app.addGrip()
-        self.app.addTable('PirateStats', pirate_stats_table_headers, action=self.send_pirate_stats, actionHeading='PP',
-                          actionButton='Send')
-        self.app.stopSubWindow()
+        self.menuPirates.triggered[QAction].connect(self.set_pirate)
 
-        self.app.startSubWindow("Per Battle Statistics", transient=True)
-        self.app.setResizable(canResize=True)
-        self.app.hideTitleBar()
-        self.app.addGrip()
-        self.app.addTable('BattleStats', battle_stats_table_headers)
-        self.app.stopSubWindow()
+        # Regular Button Actions
+        self.piratestatsButton.clicked.connect(self.regular_button_action)
+        self.battlestatsButton.clicked.connect(self.regular_button_action)
+        self.ow.overridefixButton.clicked.connect(self.fix_loss)
 
-        self.app.startSubWindow("Log Folder", modal=True)
-        self.app.setSticky('ew')
-        self.app.addFileEntry('log_folder_entry')
-        if self.app.getSetting('log_folder'):
-            self.log_folder = self.app.getSetting('log_folder')
-            self.app.setEntry('log_folder_entry', self.log_folder)
+
+
+        self.show()
+
+    # Actions
+    def menu_button_action(self, action):
+        menu_action = action.text()
+
+        if menu_action == "About":
+            state = self.aw.isVisible()
+            if state:
+                self.aw.hide()
+            else:
+                self.aw.show()
+
+        elif menu_action == "Reset":
+            self.reset_stats()
+
+        elif menu_action == "Clear This Battle":
+            self.clear_this_battle_lls()
+
+        elif menu_action == "Start" and not self.active:
+            self.active = True
+            self.log_reader_thread = Thread(target=self.read_log)
+            print('Starting Logging thread')
+            self.actionStart.setEnabled(False)
+            self.actionStop.setEnabled(True)
+            self.log_reader_thread.start()
+
+        elif menu_action == "Stop" and self.active:
+            self.active = False
+            print('Stopping Logging Thread')
+            self.actionStart.setEnabled(True)
+            self.actionStop.setEnabled(False)
+
+        elif menu_action == "Override":
+            state = self.ow.isVisible()
+            if state:
+                self.ow.hide()
+            else:
+                self.ow.show()
+
+        elif menu_action == "Set Log Folder":
+            temp_thread = Thread(target=self.set_log_folder)
+            temp_thread.start()
+
+    def regular_button_action(self):
+        btn = self.sender().objectName()
+
+        if btn == "piratestatsButton":
+            state = self.psw.isVisible()
+            if state:
+                self.psw.hide()
+            else:
+                self.psw.show()
+        elif btn == "battlestatsButton":
+            state = self.bsw.isVisible()
+            if state:
+                self.bsw.hide()
+            else:
+                self.bsw.show()
+
+    def menu_about_window_action(self):
+        state = self.aw.isVisible()
+        if state:
+            self.aw.hide()
         else:
-            self.log_folder = None
-        self.app.addButton('Save', self.save_log_folder)
-        self.app.addButton('Close', self.close_log_window)
-        self.app.stopSubWindow()
+            self.aw.show()
 
-        self.app.startSubWindow('About GBC', modal=True)
-        self.app.addLabel('a1', "GreedyBashCounter")
-        self.app.addHorizontalSeparator()
-        self.app.addLabel('a2', "Created by:")
-        self.app.addLabel('a3', "Cajun of Obsidian")
-        self.app.addLabel('a4', "Version:")
-        self.app.addLabel('a5', version)
-        self.app.stopSubWindow()
+    def pirate_stats_window_action(self):
+        state = self.psw.isVisible()
+        if state:
+            self.psw.hide()
+        else:
+            self.psw.show()
 
-        self.app.startSubWindow('Override', modal=True)
-        self.app.hideTitleBar()
-        self.app.startLabelFrame('OverrideWindowLabel', hideTitle=True, colspan=2)
-        self.app.setSticky('ew')
-        self.app.addLabelEntry('LL', 0, 0)
-        self.app.addLabelEntry('TB', 1, 0)
-        self.app.addButton('Fix', self.fix_loss, 0, 1)
-        self.app.addButton('Cancel', self.hide_override_window, 1, 1)
-        self.app.stopLabelFrame()
-        self.app.stopSubWindow()
-        self.app.go()
+    def load_pirates_menu_thread(self):
+        if not self.log_folder:
+            self.statusbar.showMessage('Log folder not set')
+        else:
+            temp_thread = Thread(target=self.load_pirates_menu)
+            temp_thread.start()
 
-    # Menus
-    def save_log_folder(self):
-        log_folder = os.path.dirname(self.app.getEntry('log_folder_entry'))
-        self.app.setSetting('log_folder', log_folder)
-        self.app.saveSettings()
+    def load_pirates_menu(self):
+        self.menuPirates.clear()
+        log_list = self.get_log_list()
+        pirates_and_oceans = [(log.split('_')[0], log.split('_')[1].capitalize()) for log in log_list]
+
+        group = QActionGroup(self.menuPirates)
+        for pirate, ocean in pirates_and_oceans:
+            action_name = 'action{}_{}'.format(pirate, ocean)
+            text = '{} - {}'.format(pirate, ocean)
+            action = QAction(text, self.menuPirates, checkable=True)
+            action.setObjectName(action_name)
+            self.menuPirates.addAction(action)
+            group.addAction(action)
+        group.setExclusive(True)
+        self.menuPirates.addSeparator()
+        self.actionLoad_Pirates = QAction(self)
+        self.actionLoad_Pirates.setObjectName("actionLoad_Pirates")
+        self.menuPirates.addAction(self.actionLoad_Pirates)
+        self.actionLoad_Pirates.setText(QCoreApplication.translate("MainWindow", "Load Pirates"))
+
+    def set_log_folder(self):
+        print('Getting Log Folder')
+        selected_folder = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if selected_folder:
+            print('Setting Log Folder')
+            self.settings.setValue('pp_log_folder', selected_folder)
+            self.log_folder = selected_folder
+            self.actionLoad_Pirates.triggered.connect(self.load_pirates_menu_thread)
 
     # Core Functions
     def get_log_list(self):
@@ -156,37 +192,39 @@ class GreedyBashCounter(object):
 
         return only_log_pirate_files
 
-    def set_pirate(self, pirate):
-        self.app.setLabel('PirateNameDisplay', pirate)
+    def set_pirate(self, action):
+        try:
+            menu_action = action.text()
+        except AttributeError:
+            menu_action = action
+
+        if menu_action != 'Load Pirates':
+            pirate, ocean = menu_action.split(' ')[0], menu_action.split(' ')[2]
+            print('Using {} on {}'.format(pirate, ocean))
+            self.active = False
+            self.actionStart.setEnabled(True)
+            self.actionStop.setEnabled(False)
+            self.piratenameLabel.setText(pirate)
+            self.pirateoceanLabel.setText(ocean)
+            self.settings.setValue('last_pirate_action_used', menu_action)
+            all_actions = self.menuPirates.actions()
+            for a in all_actions:
+                if a.isChecked() and a.text() != menu_action:
+                    a.setChecked(False)
 
     def individual_pirate_stat(self, pirate):
         print('Updating Individual Pirate Stat for {}'.format(pirate))
-        self.app.openSubWindow("Per Pirate Statistics")
         if not self.pirates.get(pirate):
             print('Creating Pirate Dictionary')
             self.pirates[pirate] = {
-                'row_id': 0,
                 'll_this_battle': 0,
                 'll_total': 0,
                 'll_average': 0,
                 'll_last_battle': 0
             }
-            self.pirates[pirate]['row_id'] = max(self.pirates['row_ids']) + 1
-            self.pirates['row_ids'].append(self.pirates[pirate]['row_id'])
-            print('New pirate {} added with row_id {}'.format(pirate, self.pirates[pirate]['row_id']))
-            row_data = [pirate, self.pirates[pirate]['ll_total'], self.pirates[pirate]['ll_average'],
-                        self.pirates[pirate]['ll_last_battle'], self.pirates[pirate]['ll_this_battle']]
-            self.app.addTableRow('PirateStats', row_data)
-            print('Generic Pirate Row Created')
-
         self.pirates[pirate]['ll_this_battle'] = self.pirates[pirate]['ll_this_battle'] + 1
         print('New LL count for {} is {}'.format(pirate, self.pirates[pirate]['ll_this_battle']))
-        row_data = [pirate, self.pirates[pirate]['ll_total'], self.pirates[pirate]['ll_average'],
-                    self.pirates[pirate]['ll_last_battle'], self.pirates[pirate]['ll_this_battle']]
-        print('Data to be added: {}'.format(row_data))
-
-        self.app.queueFunction(self.app.replaceTableRow, 'PirateStats', self.pirates[pirate]['row_id'], row_data)
-        self.app.stopSubWindow()
+        self.refresh_pirate_stats_table()
 
     def log_parser(self, lines):
         if lines:
@@ -202,7 +240,7 @@ class GreedyBashCounter(object):
                     self.battle_started = True
                     self.battle_ended = False
                     self.current_battle_ship_name = ' '.join(line.split(' ')[-2:]).replace('!', '')
-                    self.app.queueFunction(self.app.setLabel, "CBShipName", self.current_battle_ship_name)
+                    self.thisshipdisplayLabel.setText(self.current_battle_ship_name)
                     print('Battle Started')
                 elif fight_began_string in line:
                     self.fight_started = True
@@ -218,26 +256,28 @@ class GreedyBashCounter(object):
 
     def read_log(self):
         log_list = self.get_log_list()
-        active_pirate_info = self.app.getLabel('PirateNameDisplay')
-        active_pirate, ocean = active_pirate_info.split(' ')[0], active_pirate_info.split(' ')[2].lower()
+        active_pirate, ocean = self.piratenameLabel.text(), self.pirateoceanLabel.text().lower()
         active_pirate_log = [pirate for pirate in log_list if pirate.startswith('{}_{}'.format(active_pirate, ocean))]
         log_file = os.path.join(self.log_folder, active_pirate_log[0])
+        print('Reading log from: {}'.format(log_file))
         pygtail = Pygtail(log_file, read_from_end=True)
         while self.active:
             raw_lines = pygtail.read()
+            time.sleep(.5)
             if raw_lines:
                 lines = self.log_parser(raw_lines)
                 if lines:
                     for line in lines:
                         pirate = line.split(' ')[0]
                         self.this_battle_lls = self.this_battle_lls + 1
-                        self.app.queueFunction(self.app.setLabel, 'LLThisBattle', str(self.this_battle_lls))
-                        self.app.queueFunction(self.individual_pirate_stat, pirate)
+                        self.thisbattlelavishlockersLCD.display(self.this_battle_lls)
+                        self.individual_pirate_stat(pirate)
+
                 if self.battle_ended:
-                    self.app.queueFunction(self.update_major_stats)
-            sleep(0.5)
+                    self.update_major_stats()
 
     def reset_stats(self):
+        print('Resetting Stats')
         self.total_lls = 0
         self.average_lls = 0
         self.last_battle_lls = 0
@@ -245,30 +285,20 @@ class GreedyBashCounter(object):
         self.battle_count = 0
         self.current_battle_ship_name = "None"
         self.last_battle_ship_name = "None"
-        self.app.setLabel('LLTotal', str(self.total_lls))
-        self.app.setLabel('LLLastBattle', str(self.last_battle_lls))
-        self.app.setLabel('LLAverage', str(self.average_lls))
-        self.app.setLabel('BattleCount', str(self.battle_count))
-        self.app.setLabel('LLThisBattle', str(self.this_battle_lls))
-        self.app.setLabel('LBShipName', str(self.last_battle_ship_name))
-        self.app.setLabel('CBShipName', str(self.current_battle_ship_name))
-        self.app.deleteAllTableRows("PirateStats")
-        self.app.deleteAllTableRows("BattleStats")
-        self.pirates = {
-            'row_ids': [-1]
-        }
-        print('Stats Reset')
 
-    def start_stop(self, btn):
-        if btn == "Start" and not self.active:
-            self.active = True
-            self.app.disableMenuItem("Logging", "Start")
-            self.app.enableMenuItem("Logging", "Stop")
-            self.app.thread(self.read_log)
-        elif btn == "Stop" and self.active:
-            self.active = False
-            self.app.disableMenuItem("Logging", "Stop")
-            self.app.enableMenuItem("Logging", "Start")
+        self.totallavishlockersLCD.display(self.total_lls)
+        self.lastbattlelavishlockersLCD.display(self.last_battle_lls)
+        self.averagelavishlockersLCD.display(self.average_lls)
+        self.battlesLCD.display(self.battle_count)
+        self.thisbattlelavishlockersLCD.display(self.this_battle_lls)
+        self.lastshipdisplayLabel.setText(self.last_battle_ship_name)
+        self.thisshipdisplayLabel.setText(self.current_battle_ship_name)
+
+
+        self.pirates, self.battles = {}, {}
+        self.refresh_pirate_stats_table()
+        self.refresh_battle_stats_table()
+        print('Stats Reset')
 
     def update_major_stats(self):
         self.battle_count = self.battle_count + 1
@@ -278,87 +308,62 @@ class GreedyBashCounter(object):
         self.this_battle_lls = 0
         self.last_battle_ship_name = self.current_battle_ship_name
         self.current_battle_ship_name = "None"
-        self.app.setLabel('LLTotal', str(self.total_lls))
-        self.app.setLabel('LLLastBattle', str(self.last_battle_lls))
-        self.app.setLabel('LLAverage', str(self.average_lls))
-        self.app.setLabel('BattleCount', str(self.battle_count))
-        self.app.setLabel('LLThisBattle', str(self.this_battle_lls))
-        self.app.setLabel('LBShipName', str(self.last_battle_ship_name))
-        self.app.setLabel('CBShipName', str(self.current_battle_ship_name))
+        self.totallavishlockersLCD.display(self.total_lls)
+        self.lastbattlelavishlockersLCD.display(self.last_battle_lls)
+        self.averagelavishlockersLCD.display(self.average_lls)
+        self.battlesLCD.display(self.battle_count)
+        self.thisbattlelavishlockersLCD.display(self.this_battle_lls)
+        self.lastshipdisplayLabel.setText(self.last_battle_ship_name)
+        self.thisshipdisplayLabel.setText(self.current_battle_ship_name)
         self.battle_ended = False
 
         for pirate in self.pirates:
-            if pirate != 'row_ids':
-                self.pirates[pirate]['ll_total'] = self.pirates[pirate]['ll_total'] + \
-                                                   self.pirates[pirate]['ll_this_battle']
-                self.pirates[pirate]['ll_last_battle'] = self.pirates[pirate]['ll_this_battle']
-                self.pirates[pirate]['ll_this_battle'] = 0
-                self.pirates[pirate]['ll_average'] = round(self.pirates[pirate]['ll_total'] / self.battle_count, 1)
+            self.pirates[pirate]['ll_total'] = self.pirates[pirate]['ll_total'] + \
+                                               self.pirates[pirate]['ll_this_battle']
+            self.pirates[pirate]['ll_last_battle'] = self.pirates[pirate]['ll_this_battle']
+            self.pirates[pirate]['ll_this_battle'] = 0
+            self.pirates[pirate]['ll_average'] = round(self.pirates[pirate]['ll_total'] / self.battle_count, 1)
 
-                row_data = [pirate, self.pirates[pirate]['ll_total'], self.pirates[pirate]['ll_average'],
-                            self.pirates[pirate]['ll_last_battle'], self.pirates[pirate]['ll_this_battle']]
-                self.app.queueFunction(self.app.replaceTableRow, 'PirateStats',
-                                       self.pirates[pirate]['row_id'], row_data)
-
-        last_battle_row_data = [self.battle_count, self.last_battle_ship_name, self.last_battle_lls]
-        self.app.queueFunction(self.app.addTableRow, 'BattleStats', last_battle_row_data)
+        self.battles[self.battle_count] = {
+            'ship': self.last_battle_ship_name,
+            'greedies': self.last_battle_lls
+        }
+        self.refresh_pirate_stats_table()
+        self.refresh_battle_stats_table()
 
     # SubWindow Functions
     def clear_this_battle_lls(self):
         self.this_battle_lls = 0
-        self.app.queueFunction(self.app.setLabel, 'LLThisBattle', str(self.this_battle_lls))
+        self.thisbattlelavishlockersLCD.display(self.this_battle_lls)
 
     def fix_loss(self):
-        self.total_lls = int(self.app.getEntry('LL'))
-        self.battle_count = int(self.app.getEntry('TB'))
-        self.app.queueFunction(self.app.setLabel, 'BattleCount', str(self.battle_count))
-        self.app.queueFunction(self.app.setLabel, 'LLTotal', str(self.total_lls))
-        self.hide_override_window()
+        self.total_lls = self.ow.lavishlockeroverrideSpinBox.value()
+        self.battle_count = self.ow.battleoverrideSpinBox.value()
+        self.totallavishlockersLCD.display(self.total_lls)
+        self.battlesLCD.display(self.battle_count)
+        self.ow.hide()
 
-    def hide_override_window(self):
-        self.app.hideSubWindow('Override')
+    def refresh_pirate_stats_table(self):
+        table = self.psw.tableWidget
+        table.setRowCount(0)
+        print('Refreshing pirate stats table')
+        for row_id, pirate in enumerate(self.pirates.keys()):
+            table.insertRow(row_id)
+            table.setItem(row_id, 0, QTableWidgetItem(pirate))
+            table.setItem(row_id, 1, QTableWidgetItem(str(self.pirates[pirate]['ll_total'])))
+            table.setItem(row_id, 2, QTableWidgetItem(str(self.pirates[pirate]['ll_average'])))
+            table.setItem(row_id, 3, QTableWidgetItem(str(self.pirates[pirate]['ll_last_battle'])))
+            table.setItem(row_id, 4, QTableWidgetItem(str(self.pirates[pirate]['ll_this_battle'])))
 
-    def show_override_window(self):
-        self.app.showSubWindow('Override')
-
-    def about(self):
-        self.app.showSubWindow('About GBC')
-
-    def log_folder_window(self):
-        self.app.showSubWindow('Log Folder')
-
-    def close_log_window(self):
-        self.app.hideSubWindow('Log Folder')
-
-    def battle_stat_window(self):
-        window = self.app.getSetting("PBSWindow")
-        if not window:
-            self.app.showSubWindow("Per Battle Statistics")
-            self.app.setSetting("PBSWindow", True)
-        else:
-            self.app.hideSubWindow("Per Battle Statistics")
-            self.app.setSetting("PBSWindow", False)
-
-        self.app.saveSettings()
-
-    def pirate_stat_window(self):
-        window = self.app.getSetting("PPSWindow")
-        if not window:
-            self.app.showSubWindow("Per Pirate Statistics")
-            self.app.setSetting("PPSWindow", True)
-        else:
-            self.app.hideSubWindow("Per Pirate Statistics")
-            self.app.setSetting("PPSWindow", False)
-
-        self.app.saveSettings()
-
-    def get_table_data(self, table):
-        table_data = []
-        total_num_rows = self.app.getTableRowCount(table)
-        for row_num in range(total_num_rows):
-            table_data.append(self.app.getTableRow(table, row_num))
-
-        return table_data
+    def refresh_battle_stats_table(self):
+        table = self.bsw.battlestatsTable
+        table.setRowCount(0)
+        print('Refreshing battle stats table')
+        for row_id, battle_num in enumerate(self.battles.keys()):
+            table.insertRow(row_id)
+            table.setItem(row_id, 0, QTableWidgetItem(str(battle_num)))
+            table.setItem(row_id, 1, QTableWidgetItem(str(self.battles[battle_num]['ship'])))
+            table.setItem(row_id, 2, QTableWidgetItem(str(self.battles[battle_num]['greedies'])))
 
     # Send To Puzzle Pirates Functions
     def send_pirate_stats(self, row_id):
@@ -396,5 +401,31 @@ class GreedyBashCounter(object):
         SendKeys('{ENTER}')
 
 
+class PirateStats(QWidget, PirateStatsWindow):
+    def __init__(self):
+        super().__init__()
+        self.setupUi(self)
+
+
+class BattleStats(QWidget, BattleStatsWindow):
+    def __init__(self):
+        super().__init__()
+        self.setupUi(self)
+
+
+class About(QWidget, AboutWindow):
+    def __init__(self):
+        super().__init__()
+        self.setupUi(self)
+
+
+class OverrideCounts(QWidget, OverrideCountsWindow):
+    def __init__(self):
+        super().__init__()
+        self.setupUi(self)
+
+
 if __name__ == "__main__":
-    program = GreedyBashCounter()
+    app = QApplication(sys.argv)
+    gbc = GreedyBashCounter()
+    app.exec()

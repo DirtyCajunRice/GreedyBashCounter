@@ -2,6 +2,9 @@ import os
 import sys
 from re import sub
 import time
+import warnings
+warnings.simplefilter("ignore", UserWarning)
+sys.coinit_flags = 2
 from threading import Thread
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
@@ -352,9 +355,11 @@ class GreedyBashCounter(QMainWindow, MainWindow):
 
     def refresh_pirate_stats_table(self):
         table = self.psw.tableWidget
-        table.setRowCount(0)
+        if int(table.rowCount()) != 0:
+            print('Setting Row Count to 0')
+            table.setRowCount(0)
         print('Refreshing pirate stats table')
-        for row_id, pirate in enumerate(self.pirates.keys()):
+        for row_id, pirate in enumerate(self.pirates.keys(), start=1):
             table.insertRow(row_id)
             table.setItem(row_id, 0, QTableWidgetItem(str(pirate)))
             table.setItem(row_id, 1, QTableWidgetItem(str(self.pirates[pirate]['ll_total'])))
@@ -364,9 +369,11 @@ class GreedyBashCounter(QMainWindow, MainWindow):
 
     def refresh_battle_stats_table(self):
         table = self.bsw.battlestatsTable
-        table.setRowCount(0)
+        if int(table.rowCount()) != 0:
+            print('Setting Row Count to 0')
+            table.setRowCount(0)
         print('Refreshing battle stats table')
-        for row_id, battle_num in enumerate(self.battles.keys()):
+        for row_id, battle_num in enumerate(self.battles.keys(), start=1):
             table.insertRow(row_id)
             table.setItem(row_id, 0, QTableWidgetItem(str(battle_num)))
             table.setItem(row_id, 1, QTableWidgetItem(str(self.battles[battle_num]['ship'])))
@@ -412,6 +419,7 @@ class PirateStats(QWidget, PirateStatsWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        self.tableWidget.rowCount()
 
 
 class BattleStats(QWidget, BattleStatsWindow):

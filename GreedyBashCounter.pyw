@@ -45,7 +45,7 @@ class GreedyBashCounter(QMainWindow, MainWindow):
         self.settings = QSettings('settings.ini', QSettings.IniFormat)
         self.log_folder = self.settings.value('pp_log_folder')
         if self.log_folder:
-            self.load_pirates_menu_thread()
+            self.load_pirates_menu()
         else:
             self.statusbar.showMessage('Log folder not set')
 
@@ -62,7 +62,7 @@ class GreedyBashCounter(QMainWindow, MainWindow):
         # Menu Button Actions
         self.menuOptions.triggered[QAction].connect(self.menu_button_action)
         self.menuLogging.triggered[QAction].connect(self.menu_button_action)
-        self.actionLoad_Pirates.triggered.connect(self.load_pirates_menu_thread)
+        self.actionLoad_Pirates.triggered.connect(self.load_pirates_menu)
 
 
         self.menuPirates.triggered[QAction].connect(self.set_pirate)
@@ -71,8 +71,6 @@ class GreedyBashCounter(QMainWindow, MainWindow):
         self.piratestatsButton.clicked.connect(self.regular_button_action)
         self.battlestatsButton.clicked.connect(self.regular_button_action)
         self.ow.overridefixButton.clicked.connect(self.fix_loss)
-
-
 
         self.show()
 
@@ -224,7 +222,8 @@ class GreedyBashCounter(QMainWindow, MainWindow):
             }
         self.pirates[pirate]['ll_this_battle'] = self.pirates[pirate]['ll_this_battle'] + 1
         print('New LL count for {} is {}'.format(pirate, self.pirates[pirate]['ll_this_battle']))
-        self.refresh_pirate_stats_table()
+        refresh_pirate = Thread(target=self.refresh_pirate_stats_table)
+        refresh_pirate.start()
 
     def log_parser(self, lines):
         if lines:
@@ -240,6 +239,7 @@ class GreedyBashCounter(QMainWindow, MainWindow):
                     self.battle_started = True
                     self.battle_ended = False
                     self.current_battle_ship_name = ' '.join(line.split(' ')[-2:]).replace('!', '')
+                    print(self.current_battle_ship_name)
                     self.thisshipdisplayLabel.setText(self.current_battle_ship_name)
                     print('Battle Started')
                 elif fight_began_string in line:
@@ -273,8 +273,11 @@ class GreedyBashCounter(QMainWindow, MainWindow):
                         self.thisbattlelavishlockersLCD.display(self.this_battle_lls)
                         self.individual_pirate_stat(pirate)
 
+
                 if self.battle_ended:
-                    self.update_major_stats()
+                    update_stats = Thread(target=self.update_major_stats)
+                    update_stats.start()
+
 
     def reset_stats(self):
         print('Resetting Stats')
@@ -296,8 +299,10 @@ class GreedyBashCounter(QMainWindow, MainWindow):
 
 
         self.pirates, self.battles = {}, {}
-        self.refresh_pirate_stats_table()
-        self.refresh_battle_stats_table()
+        refresh_pirate = Thread(target=self.refresh_pirate_stats_table)
+        refresh_pirate.start()
+        refresh_battle = Thread(target=self.refresh_battle_stats_table)
+        refresh_battle.start()
         print('Stats Reset')
 
     def update_major_stats(self):
@@ -328,8 +333,10 @@ class GreedyBashCounter(QMainWindow, MainWindow):
             'ship': self.last_battle_ship_name,
             'greedies': self.last_battle_lls
         }
-        self.refresh_pirate_stats_table()
-        self.refresh_battle_stats_table()
+        refresh_pirate = Thread(target=self.refresh_pirate_stats_table)
+        refresh_pirate.start()
+        refresh_battle = Thread(target=self.refresh_battle_stats_table)
+        refresh_battle.start()
 
     # SubWindow Functions
     def clear_this_battle_lls(self):
@@ -349,7 +356,7 @@ class GreedyBashCounter(QMainWindow, MainWindow):
         print('Refreshing pirate stats table')
         for row_id, pirate in enumerate(self.pirates.keys()):
             table.insertRow(row_id)
-            table.setItem(row_id, 0, QTableWidgetItem(pirate))
+            table.setItem(row_id, 0, QTableWidgetItem(str(pirate)))
             table.setItem(row_id, 1, QTableWidgetItem(str(self.pirates[pirate]['ll_total'])))
             table.setItem(row_id, 2, QTableWidgetItem(str(self.pirates[pirate]['ll_average'])))
             table.setItem(row_id, 3, QTableWidgetItem(str(self.pirates[pirate]['ll_last_battle'])))
